@@ -10,6 +10,14 @@ on:
           - uefi64
           - all
         default: uefi64
+  pull_request:
+    paths:
+      - ".github/workflows/build-pba.yml"
+      - "Common/**"
+      - "LinuxPBA/**"
+      - "images/**"
+      - "Makefile.am"
+      - "configure.ac"
   push:
     tags:
       - "*"
