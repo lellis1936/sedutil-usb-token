@@ -1,10 +1,13 @@
 #!/bin/bash
 set -x
+set -o pipefail
 function die {
 echo An error has occured! Please fix this and start over!
 exit 99
 }
 . conf
+JOBS=${JOBS:-$(nproc)}
+BUILD_32BIT=${BUILD_32BIT:-1}
 cd scratch
 # clean up and start over
 rm -rf buildroot
@@ -30,12 +33,12 @@ sed -i '/menu "System tools"/a \\tsource "package/sedutil/Config.in"' package/Co
 cp -r ../../buildroot/packages/sedutil/ package/
 # Make a distribution from the current source
 cd ../../..
-autoreconf 
-./configure
-make dist
+autoreconf --install || die
+./configure || die
+make dist || die
 mkdir images/scratch/buildroot/dl/
-cp sedutil-*.tar.gz images/scratch/buildroot/dl/
-make distclean
+cp sedutil-*.tar.gz images/scratch/buildroot/dl/ || die
+make distclean || die
 
 # Expand the distribution tarball so we can use it as the Buildroot override.
 # Override location is specified in the 'local.mk' file in buildroot/{32,64}bit
@@ -43,14 +46,16 @@ make distclean
 # See also section 8.12.6 "Using Buildroot during development" in the
 # Buildroot user manual.
 cd images/scratch/buildroot/dl
-tar xvfz sedutil-*.tar.gz
+tar xvfz sedutil-*.tar.gz || die
 cd ..
 
 # build the rootfs for 64 and 32 bit systems
 echo Making the 64bit PBA Linux system
-make -j12 O=64bit 2>&1 | tee 64bit/build_output.txt
-echo Making the 32bit PBA Linux system
-make -j12 O=32bit 2>&1 | tee 32bit/build_output.txt
+make -j"${JOBS}" O=64bit 2>&1 | tee 64bit/build_output.txt || die
+if [ "${BUILD_32BIT}" = "1" ]; then
+    echo Making the 32bit PBA Linux system
+    make -j"${JOBS}" O=32bit 2>&1 | tee 32bit/build_output.txt || die
+fi
 # back to where we started
 cd ../..
 exit 0

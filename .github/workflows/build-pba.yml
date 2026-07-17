@@ -1,0 +1,161 @@
+name: Build PBA
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: PBA images to build
+        type: choice
+        options:
+          - uefi64
+          - all
+        default: uefi64
+  pull_request:
+    paths:
+      - ".github/workflows/build-pba.yml"
+      - "Common/**"
+      - "LinuxPBA/**"
+      - "images/**"
+      - "Makefile.am"
+      - "configure.ac"
+  push:
+    tags:
+      - "*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pba-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build PBA images
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    container:
+      image: ubuntu:20.04
+      options: --privileged
+    env:
+      DEBIAN_FRONTEND: noninteractive
+      FORCE_UNSAFE_CONFIGURE: "1"
+      JOBS: "2"
+      BUILD_TARGET: ${{ inputs.target || 'uefi64' }}
+      BUILD_32BIT: ${{ inputs.target == 'all' && '1' || '0' }}
+      LEGACY_RELEASE_COMMIT: ffb837d567616ffd6ba2fc1c697c5cff72ca91c4
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          apt-get install --yes --no-install-recommends \
+            autoconf \
+            automake \
+            bc \
+            bison \
+            build-essential \
+            ca-certificates \
+            cpio \
+            dosfstools \
+            e2fsprogs \
+            fdisk \
+            file \
+            flex \
+            gawk \
+            gdisk \
+            git \
+            libtool \
+            locales \
+            python3 \
+            rsync \
+            sudo \
+            unzip \
+            wget \
+            xz-utils
+          ln -sf /usr/bin/python3 /usr/local/bin/python
+
+      - name: Check out source
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Configure checkout ownership
+        run: git config --global --add safe.directory "${GITHUB_WORKSPACE}"
+
+      - name: Set artifact suffix
+        env:
+          REF_FOR_ARTIFACT: ${{ github.head_ref || github.ref_name }}
+        run: |
+          artifact_suffix="$(printf '%s' "${REF_FOR_ARTIFACT}" | sed 's/[\/\\:*?"<>|]/-/g')"
+          test -n "${artifact_suffix}"
+          printf 'ARTIFACT_SUFFIX=%s\n' "${artifact_suffix}" >> "${GITHUB_ENV}"
+
+      - name: Fetch upstream version tags
+        run: git fetch --force https://github.com/Drive-Trust-Alliance/sedutil.git "refs/tags/*:refs/tags/*"
+
+      - name: Verify ChubbyAnt release lineage
+        run: |
+          git cat-file -e "${LEGACY_RELEASE_COMMIT}^{commit}"
+          git merge-base --is-ancestor "${LEGACY_RELEASE_COMMIT}" HEAD
+
+      - name: Build PBA root filesystems
+        working-directory: images
+        run: |
+          ./getresources
+          ./buildpbaroot
+
+      - name: Build bootable PBA images
+        working-directory: images
+        run: |
+          ./buildUEFI64
+
+      - name: Build legacy and rescue PBA images
+        if: env.BUILD_TARGET == 'all'
+        working-directory: images
+        run: |
+          ./buildbios
+          ./buildrescue Rescue32
+          ./buildrescue Rescue64
+
+      - name: Create checksums
+        working-directory: images
+        run: |
+          find UEFI64 -maxdepth 1 -type f -name '*.img.gz' \
+            -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+          test "$(wc -l < SHA256SUMS)" -eq 1
+
+      - name: Record build provenance
+        run: |
+          printf 'source_commit=%s\n' "$(git rev-parse HEAD)" > images/BUILDINFO.txt
+          printf 'source_version=%s\n' "$(git describe --tags --always --dirty)" >> images/BUILDINFO.txt
+          printf 'legacy_release_commit=%s\n' "${LEGACY_RELEASE_COMMIT}" >> images/BUILDINFO.txt
+          printf 'legacy_release_ancestor=true\n' >> images/BUILDINFO.txt
+          printf 'build_target=%s\n' "${BUILD_TARGET}" >> images/BUILDINFO.txt
+          printf 'runner=ubuntu-24.04\ncontainer=ubuntu:20.04\n' >> images/BUILDINFO.txt
+
+      - name: Upload UEFI64 PBA image
+        uses: actions/upload-artifact@v4
+        with:
+          name: sedutil-pba-uefi64-${{ env.ARTIFACT_SUFFIX }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            images/UEFI64/*.img.gz
+            images/SHA256SUMS
+            images/BUILDINFO.txt
+
+      - name: Upload legacy and rescue PBA images
+        if: env.BUILD_TARGET == 'all'
+        uses: actions/upload-artifact@v4
+        with:
+          name: sedutil-pba-additional-${{ env.ARTIFACT_SUFFIX }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            images/BIOS32/*.img.gz
+            images/RESCUE32/*.img.gz
+            images/RESCUE64/*.img.gz
