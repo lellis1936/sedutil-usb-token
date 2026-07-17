@@ -39,6 +39,7 @@ jobs:
       options: --privileged
     env:
       DEBIAN_FRONTEND: noninteractive
+      FORCE_UNSAFE_CONFIGURE: "1"
       JOBS: "2"
       BUILD_TARGET: ${{ inputs.target || 'uefi64' }}
       BUILD_32BIT: ${{ inputs.target == 'all' && '1' || '0' }}
