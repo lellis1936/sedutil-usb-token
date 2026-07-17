@@ -69,11 +69,13 @@ jobs:
             git \
             libtool \
             locales \
+            python3 \
             rsync \
             sudo \
             unzip \
             wget \
             xz-utils
+          ln -sf /usr/bin/python3 /usr/local/bin/python
 
       - name: Check out source
         uses: actions/checkout@v5
